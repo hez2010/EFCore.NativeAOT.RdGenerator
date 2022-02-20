@@ -99,7 +99,7 @@ async Task WriteRdXmlFileAsync(List<Entity> entities)
     }
 
     Console.WriteLine("Generating necessary runtime directives for keys...");
-    var idMapFacFacCreateFacMethod = typeof(Microsoft.EntityFrameworkCore.ChangeTracking.Internal.IdentityMapFactoryFactory).GetMethod("CreateFactory", BindingFlags.NonPublic | BindingFlags.Instance) ?? throw new NotSupportedException();
+    var idMapFacFacCreateFacMethod = typeof(Microsoft.EntityFrameworkCore.ChangeTracking.Internal.IdentityMapFactoryFactory).GetMethod("CreateFactory", BindingFlags.NonPublic | BindingFlags.Static) ?? throw new NotSupportedException();
     var efPropMethod = typeof(Microsoft.EntityFrameworkCore.EF).GetMethod("Property") ?? throw new NotSupportedException();
     foreach (var e in entities.SelectMany(i => i.Properties).Where(i => i.IsKey).Select(i => i.Type.IsValueType ? i.Type : typeof(object)).Distinct())
     {
@@ -133,8 +133,18 @@ async Task WriteRdXmlFileAsync(List<Entity> entities)
     }
 
     // TODO
-    await using var fs = new FileStream("rd.gen.xml", FileMode.Create);
-    fs.Seek(0, SeekOrigin.Begin);
+    // await using var fs = new FileStream("rd.efcore.gen.xml", FileMode.Create);
+    // fs.Seek(0, SeekOrigin.Begin);
+
+    foreach (var i in types)
+    {
+        Console.WriteLine(i);
+    }
+
+    foreach (var i in methods)
+    {
+        Console.WriteLine(i);
+    }
 }
 
 record Entity(Assembly Assembly, string Name, Type Type, IEnumerable<Property> Properties);
