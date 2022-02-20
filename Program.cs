@@ -1,4 +1,6 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using System;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
@@ -87,6 +89,25 @@ Type GetSnapshotType(Type[] types)
     }).MakeGenericType(types);
 }
 
+string GetXmlForMethod(MethodInfo method)
+{
+    return @$"<Assembly Name=""{filter.Replace(method.DeclaringType.Assembly.FullName, "")}"" Dynamic=""Required All"">
+  <Type Name=""{filter.Replace(method.DeclaringType.FullName, "")}"" Dynamic=""Required All"">
+    <Method Name=""{method.Name}"" Dynamic=""Required"">{
+        (method.IsGenericMethod ?
+            method.GetGenericArguments().Select(i => filter.Replace(i.FullName, "")).Aggregate("\n", (a, n) => $"{a}      <GenericArgument Name=\"{n}\" />\n") : "")
+}    </Method>
+  </Type>
+</Assembly>";
+}
+
+string GetXmlForType(Type type)
+{
+    return @$"<Assembly Name=""{filter.Replace(type.Assembly.FullName, "")}"" Dynamic=""Required All"">
+  <Type Name=""{filter.Replace(type.FullName, "")}"" Dynamic=""Required All"" />
+</Assembly>";
+}
+
 async Task WriteRdXmlFileAsync(List<Entity> entities)
 {
     var types = new HashSet<Type>();
@@ -138,12 +159,12 @@ async Task WriteRdXmlFileAsync(List<Entity> entities)
 
     foreach (var i in types)
     {
-        Console.WriteLine(i);
+        Console.WriteLine(GetXmlForType(i));
     }
 
     foreach (var i in methods)
     {
-        Console.WriteLine(i);
+        Console.WriteLine(GetXmlForMethod(i));
     }
 }
 
