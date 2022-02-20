@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -89,29 +92,31 @@ Type GetSnapshotType(Type[] types)
     }).MakeGenericType(types);
 }
 
-string GetXmlForMethod(MethodInfo method)
-{
-    return @$"<Assembly Name=""{filter.Replace(method.DeclaringType.Assembly.FullName, "")}"" Dynamic=""Required All"">
-  <Type Name=""{filter.Replace(method.DeclaringType.FullName, "")}"" Dynamic=""Required All"">
-    <Method Name=""{method.Name}"" Dynamic=""Required"">{
-        (method.IsGenericMethod ?
-            method.GetGenericArguments().Select(i => filter.Replace(i.FullName, "")).Aggregate("\n", (a, n) => $"{a}      <GenericArgument Name=\"{n}\" />\n") : "")
-}    </Method>
-  </Type>
-</Assembly>";
-}
-
-string GetXmlForType(Type type)
-{
-    return @$"<Assembly Name=""{filter.Replace(type.Assembly.FullName, "")}"" Dynamic=""Required All"">
-  <Type Name=""{filter.Replace(type.FullName, "")}"" Dynamic=""Required All"" />
-</Assembly>";
-}
-
 async Task WriteRdXmlFileAsync(List<Entity> entities)
 {
     var types = new HashSet<Type>();
     var methods = new HashSet<MethodInfo>();
+
+    Console.WriteLine("Generating necessary runtime directives for primitive types...");
+    foreach (var m in typeof(DateTime).GetRuntimeMethods())
+    {
+        if (m.Name.StartsWith("Add")) methods.Add(m);
+    }
+
+    foreach (var m in typeof(DateTimeOffset).GetRuntimeMethods())
+    {
+        if (m.Name.StartsWith("Add")) methods.Add(m);
+    }
+
+    foreach (var m in typeof(DateOnly).GetRuntimeMethods())
+    {
+        if (m.Name.StartsWith("Add")) methods.Add(m);
+    }
+
+    foreach (var m in typeof(TimeOnly).GetRuntimeMethods())
+    {
+        if (m.Name.StartsWith("Add")) methods.Add(m);
+    }
 
     Console.WriteLine("Generating necessary runtime directives for snapshots...");
     foreach (var e in entities)
@@ -152,20 +157,69 @@ async Task WriteRdXmlFileAsync(List<Entity> entities)
             methods.Add(clrPropGetterCreateGenericMethod.MakeGenericMethod(new[] { e.Type, p.Type, p.Type }));
         }
     }
+    
+    var rdEntries = new Dictionary</* Assembly */ string, Dictionary</* Type */ string, List<(string Name, List<string> GenericArguments, List<string> Parameters)>>>();
 
-    // TODO
-    // await using var fs = new FileStream("rd.efcore.gen.xml", FileMode.Create);
-    // fs.Seek(0, SeekOrigin.Begin);
-
-    foreach (var i in types)
+    foreach (var type in types)
     {
-        Console.WriteLine(GetXmlForType(i));
+        var assemblyName = filter.Replace(type.Assembly.FullName!, "");
+        if (!rdEntries.ContainsKey(assemblyName)) rdEntries[assemblyName] = new();
+        var typeName = filter.Replace(type.FullName!, "");
+        if (!rdEntries[assemblyName].ContainsKey(typeName)) rdEntries[assemblyName][typeName] = new();
     }
 
-    foreach (var i in methods)
+    foreach (var method in methods)
     {
-        Console.WriteLine(GetXmlForMethod(i));
+        var type = method.DeclaringType!;
+        var assemblyName = filter.Replace(type.Assembly!.FullName!, "");
+        if (!rdEntries.ContainsKey(assemblyName)) rdEntries[assemblyName] = new();
+        var typeName = filter.Replace(type.FullName!, "");
+        if (!rdEntries[assemblyName].ContainsKey(typeName)) rdEntries[assemblyName][typeName] = new();
+
+        (string Name, List<string> GenericArguments, List<string> Parameters) mSig = new(method.Name, new(), new());
+        if (method.IsGenericMethod)
+        {
+            foreach (var genericArgument in method.GetGenericArguments())
+            {
+                mSig.GenericArguments.Add(filter.Replace(genericArgument.AssemblyQualifiedName!, ""));
+            }
+        }
+        foreach (var parameter in method.GetParameters())
+        {
+            mSig.Parameters.Add(filter.Replace(parameter.ParameterType.AssemblyQualifiedName!, ""));
+        }
+        rdEntries[assemblyName][typeName].Add(mSig);
     }
+
+    await using var fs = new FileStream("rd.efcore.gen.xml", FileMode.Create);
+    await using var sw = new StreamWriter(fs);
+    await sw.WriteLineAsync("<Directives>");
+    await sw.WriteLineAsync("  <Application>");
+    foreach (var assembly in rdEntries)
+    {
+        await sw.WriteLineAsync($"    <Assembly Name=\"{assembly.Key}\">");
+        foreach (var type in assembly.Value)
+        {
+            await sw.WriteLineAsync($"      <Type Name=\"{type.Key}\">");
+            foreach (var method in type.Value)
+            {
+                await sw.WriteLineAsync($"        <Method Name=\"{method.Name}\">");
+                foreach (var genericArgument in method.GenericArguments)
+                {
+                    await sw.WriteLineAsync($"          <GenericArgument Name=\"{genericArgument}\" />");
+                }
+                foreach (var parameter in method.Parameters)
+                {
+                    await sw.WriteLineAsync($"          <Parameter Name=\"{parameter}\" />");
+                }
+                await sw.WriteLineAsync($"        </Method>");
+            }
+            await sw.WriteLineAsync($"      </Type>");
+        }
+        await sw.WriteLineAsync($"    </Assembly>");
+    }
+    await sw.WriteLineAsync("  </Application>");
+    await sw.WriteLineAsync("</Directives>");
 }
 
 record Entity(Assembly Assembly, string Name, Type Type, IEnumerable<Property> Properties);
