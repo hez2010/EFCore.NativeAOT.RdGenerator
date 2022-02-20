@@ -2,6 +2,8 @@
 
 This project indents to generate all necessary runtime directives for EFCore in NativeAOT scenario.
 
+Status: WIP.
+
 ## Build
 ```bash
 dotnet build -c Release
