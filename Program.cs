@@ -23,15 +23,10 @@ if (args.Length < 2)
 }
 
 var assembly = Assembly.LoadFile(args[0]);
-var types = new List<Type>();
-var filter = new Regex(@", Version=.*?, Culture=.*?, PublicKeyToken=[a-z0-9]+", RegexOptions.Compiled);
-foreach (var ctx in args[1..])
-{
-    if (assembly.GetType(ctx) is Type t)
-        types.Add(t);
-}
 
-await WriteRdXmlFileAsync(types.SelectMany(t => ProcessContextType(t)).ToList());
+var (types, methods) = GenerateTypesAndMethods(args[1..].SelectMany(ctx => assembly.GetType(ctx) is Type t ? new[] { t } : Array.Empty<Type>()).SelectMany(t => ProcessContextType(t)).ToList());
+await WriteRdXmlFileAsync(types, methods);
+Console.WriteLine("Done");
 
 IEnumerable<Entity> ProcessContextType(Type type)
 {
@@ -92,7 +87,7 @@ Type GetSnapshotType(Type[] types)
     }).MakeGenericType(types);
 }
 
-async Task WriteRdXmlFileAsync(List<Entity> entities)
+(HashSet<Type> Types, HashSet<MethodInfo> Methods) GenerateTypesAndMethods(List<Entity> entities)
 {
     var types = new HashSet<Type>();
     var methods = new HashSet<MethodInfo>();
@@ -157,7 +152,14 @@ async Task WriteRdXmlFileAsync(List<Entity> entities)
             methods.Add(clrPropGetterCreateGenericMethod.MakeGenericMethod(new[] { e.Type, p.Type, p.Type }));
         }
     }
-    
+
+    return (types, methods);
+}
+
+async Task WriteRdXmlFileAsync(HashSet<Type> types, HashSet<MethodInfo> methods)
+{
+    Console.WriteLine("Emitting runtime directive entries...");
+    var filter = new Regex(@", Version=.*?, Culture=.*?, PublicKeyToken=[a-z0-9]+", RegexOptions.Compiled);
     var rdEntries = new Dictionary</* Assembly */ string, Dictionary</* Type */ string, List<(string Name, List<string> GenericArguments, List<string> Parameters)>>>();
 
     foreach (var type in types)
@@ -191,6 +193,7 @@ async Task WriteRdXmlFileAsync(List<Entity> entities)
         rdEntries[assemblyName][typeName].Add(mSig);
     }
 
+    Console.WriteLine("Writting rd.efcore.gen.xml...");
     await using var fs = new FileStream("rd.efcore.gen.xml", FileMode.Create);
     await using var sw = new StreamWriter(fs);
     await sw.WriteLineAsync("<Directives>");
